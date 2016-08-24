@@ -6,6 +6,7 @@ import org.motechproject.commons.api.AbstractDataProvider;
 import org.motechproject.commons.api.DataProvider;
 import org.motechproject.event.MotechEvent;
 import org.motechproject.event.listener.annotations.MotechListener;
+import org.motechproject.openmrs.domain.Attribute;
 import org.motechproject.openmrs.domain.Encounter;
 import org.motechproject.openmrs.domain.GeneratedIdentifier;
 import org.motechproject.openmrs.domain.Patient;
@@ -30,6 +31,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -37,6 +39,7 @@ import static org.motechproject.openmrs.tasks.OpenMRSTasksConstants.ACTIVE_PROGR
 import static org.motechproject.openmrs.tasks.OpenMRSTasksConstants.BY_MOTECH_ID;
 import static org.motechproject.openmrs.tasks.OpenMRSTasksConstants.BY_MOTECH_ID_AND_PROGRAM_NAME;
 import static org.motechproject.openmrs.tasks.OpenMRSTasksConstants.BY_UUID;
+import static org.motechproject.openmrs.tasks.OpenMRSTasksConstants.BAHMNI_PROGRAM_ENROLLMENT;
 import static org.motechproject.openmrs.tasks.OpenMRSTasksConstants.BY_UUID_AMD_PROGRAM_NAME;
 import static org.motechproject.openmrs.tasks.OpenMRSTasksConstants.ENCOUNTER;
 import static org.motechproject.openmrs.tasks.OpenMRSTasksConstants.IDENTIFIER;
@@ -132,6 +135,12 @@ public class OpenMRSTaskDataProvider extends AbstractDataProvider {
 
         String objectType = type.substring(0, type.lastIndexOf('-'));
         String configName = type.substring(type.lastIndexOf('-') + 1);
+        boolean isBahmniProgramEnrollment = false;
+
+        if (StringUtils.equals(BAHMNI_PROGRAM_ENROLLMENT, objectType)) {
+            isBahmniProgramEnrollment = true;
+            objectType = PROGRAM_ENROLLMENT;
+        }
 
         //In case of any trouble with the type, 'supports' method logs an error
         if (supports(objectType)) {
@@ -144,7 +153,7 @@ public class OpenMRSTaskDataProvider extends AbstractDataProvider {
                     break;
                 case RELATIONSHIP: obj = getRelationship(lookupFields, configName);
                     break;
-                case PROGRAM_ENROLLMENT: obj = getProgramEnrollments(lookupName, lookupFields, configName);
+                case PROGRAM_ENROLLMENT: obj = getProgramEnrollments(lookupName, lookupFields, configName, isBahmniProgramEnrollment);
                     break;
                 case IDENTIFIER: obj = getIdentifier(lookupFields, configName);
             }
@@ -207,16 +216,24 @@ public class OpenMRSTaskDataProvider extends AbstractDataProvider {
         return relationships.isEmpty() ? null : relationships.get(0);
     }
 
-    private ProgramEnrollmentListResult getProgramEnrollments(String lookupName, Map<String, String> lookupFields, String configName) {
+    private ProgramEnrollmentListResult getProgramEnrollments(String lookupName, Map<String, String> lookupFields, String configName, boolean isBahmniProgramEnrollment) {
         List<ProgramEnrollment> programEnrollments = null;
 
         switch (lookupName) {
             case BY_MOTECH_ID_AND_PROGRAM_NAME: {
-                programEnrollments = programEnrollmentService.getProgramEnrollmentByPatientMotechId(configName, lookupFields.get(PATIENT_MOTECH_ID));
+                if (isBahmniProgramEnrollment) {
+                    programEnrollments = programEnrollmentService.getBahmniProgramEnrollmentByPatientMotechId(configName, lookupFields.get(PATIENT_MOTECH_ID));
+                } else {
+                    programEnrollments = programEnrollmentService.getProgramEnrollmentByPatientMotechId(configName, lookupFields.get(PATIENT_MOTECH_ID));
+                }
                 break;
             }
             case BY_UUID_AMD_PROGRAM_NAME: {
-                programEnrollments = programEnrollmentService.getProgramEnrollmentByPatientUuid(configName, lookupFields.get(PATIENT_UUID));
+                if (isBahmniProgramEnrollment) {
+                    programEnrollments = programEnrollmentService.getBahmniProgramEnrollmentByPatientUuid(configName, lookupFields.get(PATIENT_UUID));
+                } else {
+                    programEnrollments = programEnrollmentService.getProgramEnrollmentByPatientUuid(configName, lookupFields.get(PATIENT_UUID));
+                }
                 break;
             }
             default: {
@@ -228,7 +245,22 @@ public class OpenMRSTaskDataProvider extends AbstractDataProvider {
         ProgramEnrollmentListResult filteredProgramEnrollments = prepareProgramEnrollmentListResult(programEnrollments, lookupFields);
         checkNumberOfPrograms(filteredProgramEnrollments, lookupFields, lookupName);
 
+        if (isBahmniProgramEnrollment && !filteredProgramEnrollments.getResults().isEmpty()) {
+            Map<String, String> attributes = getProgramEnrollmentAttributes(filteredProgramEnrollments.getFirstObject());
+            if (attributes.equals(attributes)) {
+                checkNumberOfPrograms(filteredProgramEnrollments, lookupFields, lookupName); // test
+            }
+        }
+
         return filteredProgramEnrollments;
+    }
+
+    private Map<String, String> getProgramEnrollmentAttributes(ProgramEnrollment programEnrollment) {
+        Map<String, String> programEnrollmentAttributes = new HashMap<>();
+        for (Attribute attribute : programEnrollment.getAttributes()) {
+            programEnrollmentAttributes.put(attribute.getAttributeType().getDisplay(), attribute.getValue());
+        }
+        return programEnrollmentAttributes;
     }
 
     private GeneratedIdentifier getIdentifier(Map<String, String> lookupFields, String configName) {
